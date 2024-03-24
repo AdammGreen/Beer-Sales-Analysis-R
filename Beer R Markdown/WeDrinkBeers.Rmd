@@ -1,0 +1,332 @@
+---
+title: "WeDrinkBeers"
+output: html_document
+date: "2022-10-24"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+
+
+```{r}
+#Note: You need to change your URL in 3 places. Change the first 2 URLS in the "Load 2 csv file" section
+#Then scroll down and change the url to the projects folder in the "# Specify the path and name for the CSV file" section
+```
+
+
+```{r}
+library(readxl)
+library(tidyverse)
+library(ggplot2)
+library(tidyr)
+library(dplyr)
+library(lpSolve)
+```
+
+
+```{r}
+#load 2 csv files (product and transaction)
+
+product_range <- read.csv("/Users/adamdanielgreen/Desktop/R Project/Product_range.csv", header = TRUE, sep=",", dec = ".")
+transactions <- read.csv("/Users/adamdanielgreen/Desktop/R Project/Transactions.csv", header = TRUE, sep=",", dec = ".")
+
+```
+
+```{r}
+# View the first few rows of the data
+head(product_range)
+head(transactions)
+
+# View the summary of the data
+summary(product_range)
+summary(transactions)
+
+# View the structure of the data
+str(product_range)
+str(transactions)
+
+# Dimensions of the data
+dim(product_range)
+dim(transactions)
+
+# Names of the cols
+names(product_range)
+names(transactions)
+
+# View data type of each column
+sapply(product_range, class)
+sapply(transactions, class)
+
+```
+
+
+```{r}
+# Merging the datasets on the "Product_code" column
+merged_data <- merge(product_range, transactions, by = "Product_code")
+
+View(merged_data)
+
+# View the first few rows of the merged dataframe
+head(merged_data)
+summary(merged_data)
+str(merged_data)
+dim(merged_data)
+names(merged_data)
+sapply(merged_data, class)
+```
+
+
+```{r}
+
+
+
+# Identify columns with any missing values
+columns_with_na <- names(merged_data)[sapply(merged_data, anyNA)]
+
+columns_with_na
+
+# Filter out rows where ABV is NA
+merged_data <- merged_data[!is.na(merged_data$ABV), ]
+
+# Replace missing values in 'Discount_amount' column with 0
+# Missing values in Discount Amount and Discount percentage are in the same rows, which proves there was no discount
+merged_data$Discount_amount[is.na(merged_data$Discount_amount)] <- 0
+
+# Replace missing values in 'Discount_percentage' column with 0
+merged_data$Discount_percentage[is.na(merged_data$Discount_percentage)] <- 0
+
+# 11 values missing in size column - It would be better to delete these rows for accuracy in predictions
+# Filter out rows where Size is NA
+merged_data <- merged_data[!is.na(merged_data$Size), ]
+
+# Delete all rows with sale_amount as NA as these rows have negative discounts and discount percentage
+# Filter out rows where Sale_amount is NA
+merged_data <- merged_data[!is.na(merged_data$Sale_amount), ]
+
+# Filter out rows where Profit is NA
+merged_data <- merged_data[!is.na(merged_data$Profit), ]
+
+# Calculating profit percentage as (Profit/Sale_amount) * 100
+merged_data <- merged_data %>% mutate(Profit_Percentage = (Profit / Sale_amount) * 100)
+
+# Many Vendors have missing values in Vendor_Code column
+merged_data %>%
+  filter(Vendor_code == "" | Vendor_code == " ")
+
+# Making the missing values in Vendor_Code as Unknown
+merged_data <- merged_data %>%
+  mutate(Vendor_code = ifelse(Vendor_code == "" | Vendor_code == " ", "Unknown", Vendor_code))
+
+# Making the missing values in Country_of_Origin as Unknow
+merged_data <- merged_data %>%
+  mutate(Country_of_Origin = ifelse(Country_of_Origin == "" | Country_of_Origin == " ", "Unknown", Country_of_Origin))
+
+# Making the values in country_of_origin where values are ??? to Unknown
+merged_data <- merged_data %>%
+  mutate(Country_of_Origin = ifelse(Country_of_Origin == "???", "Unknown", Country_of_Origin))
+
+# Changing the datatype of the Date_and_time_of_unloading column
+merged_data$Date <- as.Date(merged_data$Date_and_time_of_unloading, format = "%Y-%m-%d %H:%M:%S")
+
+# View the first few rows of the updated dataframe
+head(merged_data)
+
+```
+
+
+
+```{r}
+
+# Specify the path and name for the CSV file
+final_Table <- "/Users/adamdanielgreen/Desktop/R Project/final_Table.csv"
+
+# Export the merged dataset as a CSV file
+write.csv(merged_data, final_Table, row.names = FALSE)
+
+# Number of rows reduced due to data cleaning -- 50084 (previous) -- 44166 (after cleaning)
+```
+
+
+
+```{r}
+
+# EXAMPLES of EDA USING DPYLR 
+
+
+# Filtering beers from the vendor "To OI"
+specific_vendor <- merged_data %>% filter(Vendor_code == "To OI")
+specific_vendor
+
+# Filtering beers from the country "Denmark"
+beers_from_denmark <- merged_data %>% filter(Country_of_Origin == "Denmark")
+beers_from_denmark
+
+#view(beers_from_denmark)
+
+# Arranging beers by Retail_price in ascending order
+sorted_by_price <- merged_data %>% arrange(Retail_price)
+sorted_by_price
+
+# Arranging beers by ABV in descending order
+sorted_by_abv <- merged_data %>% arrange(desc(ABV))
+sorted_by_abv
+
+#view(sorted_by_abv)
+
+# Selecting the Name, Retail_price, and ABV columns
+selected_columns <- merged_data %>% select(Name, Retail_price, ABV)
+
+# Computing the average Retail_price
+average_price <- merged_data %>% summarise(Avg_Retail_Price = mean(Retail_price, na.rm = TRUE))
+average_price
+
+# Computing total Sale_amount for each vendor
+total_sales_per_vendor <- merged_data %>% group_by(Vendor_code) %>% summarise(Total_Sales = sum(Sale_amount, na.rm = TRUE))
+total_sales_per_vendor
+```
+
+
+
+```{r}
+# VISUALIZATIONS
+
+# Bar Plot of Sales by Vendor:
+# Visualizing total sales for each vendor can help identify top-performing vendors.
+
+# Filtering out the top 10 vendors by total sales
+top_vendors <- merged_data %>%
+  group_by(Vendor_code) %>%
+  summarise(Total_Sales = sum(Sale_amount, na.rm = TRUE)) %>%
+  arrange(desc(Total_Sales)) %>%
+  head(10)
+
+
+# Plotting the bar chart for top 10 vendors
+ggplot(top_vendors, aes(x = reorder(Vendor_code, Total_Sales), y = Total_Sales)) +
+  geom_bar(stat = "identity") +
+  coord_flip() +
+  labs(title = "Top 10 Vendors by Total Sales", x = "Vendor", y = "Total Sales")
+
+# Histogram of Retail Prices:
+# This can help understand the distribution of beer prices.
+
+ggplot(merged_data, aes(x = Retail_price)) +
+geom_histogram(binwidth = 50, fill = "blue", color = "black", alpha = 0.7) +
+labs(title = "Distribution of Retail Prices", x = "Retail Price", y = "Count") +
+coord_cartesian(xlim = c(0, 3000))
+
+
+# Scatter Plot of Retail Price vs. ABV:
+# See if there's any trend between the alcohol content and the retail price.
+
+ggplot(merged_data, aes(x = ABV, y = Retail_price)) +
+geom_point(aes(color = Country_of_Origin)) +
+labs(title = "Retail Price vs. ABV", x = "Alcohol By Volume (ABV)", y = "Retail Price") +
+theme_minimal()
+
+# Time Series of Sales:
+# Monitor sales trends over time.
+
+merged_data %>%
+  group_by(Date) %>%
+  summarise(Daily_Sales = sum(Sale_amount, na.rm = TRUE)) %>%
+  ggplot(aes(x = Date, y = Daily_Sales)) +
+  geom_line() +
+  labs(title = "Daily Sales Over Time", x = "Date", y = "Daily Sales") +
+  theme_minimal()
+```
+
+
+
+```{r}
+# Sum profit by country
+profit_by_country <- merged_data %>%
+  group_by(Country_of_Origin) %>%
+  summarise(Total_Profit = sum(Profit)) %>%
+  arrange(-Total_Profit)
+
+# Bar graph using ggplot2
+ggplot(profit_by_country, aes(x = reorder(Country_of_Origin, Total_Profit), y = Total_Profit)) +
+  geom_bar(stat = "identity") +
+  coord_flip() +  # To make it a horizontal bar chart
+  labs(title = "Most Profitable Countries",
+       x = "Country",
+       y = "Total Profit")
+
+
+
+# -------------------------------------------------------------------------
+
+# Sum profit by beer name
+profit_by_beer <- merged_data %>%
+  dplyr::group_by(Name) %>%
+  dplyr::summarise(Total_Profit = sum(Profit, na.rm = TRUE)) %>%
+  dplyr::arrange(-Total_Profit) %>%
+  dplyr::top_n(20)
+
+# Bar graph using ggplot2
+ggplot(profit_by_beer, aes(x = reorder(Name, Total_Profit), y = Total_Profit)) +
+  geom_bar(stat = "identity") +
+  coord_flip() +  # To make it a horizontal bar chart
+  labs(title = "Top 20 Most Profitable Beers",
+       x = "Beer Name",
+       y = "Total Profit")
+
+
+# -------------------------------------------------------------------------
+
+#show the 10 most profitable beers, each of which comes from a different country 
+
+# Get the most profitable beers by aggregating profit by beer name and then by country
+profitable_beers <- merged_data %>%
+  group_by(Name, Country_of_Origin) %>%
+  summarise(Total_Profit = sum(Profit, na.rm = TRUE)) %>%
+  arrange(-Total_Profit)
+
+# Choose the most profitable beer from each country
+selected_beers <- profitable_beers %>%
+  group_by(Country_of_Origin) %>%
+  slice_head(n = 1) %>%
+  ungroup()
+
+# Take only the top 10 from the selected beers
+selected_beers <- selected_beers %>%
+  arrange(-Total_Profit) %>%
+  slice_head(n = 10)
+
+# Objective: profits from the top 10 beers
+f.obj <- selected_beers$Total_Profit
+
+
+# Results
+data.frame(Beer_Name = selected_beers$Name, 
+           Country = selected_beers$Country_of_Origin)
+# -------------------------------------------------------------------------
+
+#Plot the sales for these 10 different beers. Could be useful if you want to have a diverse product range
+
+# Aggregating sales amount by beer name for the selected beers
+sales_data <- merged_data %>%
+  filter(Name %in% selected_beers$Name) %>%
+  group_by(Name) %>%
+  summarise(Total_Sales_Amount = sum(Sale_amount, na.rm = TRUE)) %>%
+  arrange(-Total_Sales_Amount)
+
+# Plotting the sales data
+ggplot(sales_data, aes(x = reorder(Name, Total_Sales_Amount), y = Total_Sales_Amount)) +
+  geom_bar(stat = "identity") +
+  coord_flip() +
+  labs(title = "Sales for Selected Beers",
+       x = "Beer Name",
+       y = "Total Sales Amount") +
+  theme_minimal()
+
+
+# -------------------------------------------------------------------------
+
+
+```
+
